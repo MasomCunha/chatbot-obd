@@ -1,0 +1,19 @@
+# Render Blueprint — deploy do chatbot RAG (Next.js + transformers.js, runtime Node)
+# Como usar: no dashboard do Render -> New + -> Blueprint -> seleciona o repo.
+# O Render lê este ficheiro. Depois só tens de colar a chave Gemini (env var marcada
+# como sync:false, ou seja, NÃO vai no repositório).
+services:
+  - type: web
+    name: chatbot-obd
+    runtime: node
+    region: frankfurt
+    plan: free
+    branch: main
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      # Chave do Google AI Studio — preencher no painel do Render (fica secreta).
+      - key: GOOGLE_GENERATIVE_AI_API_KEY
+        sync: false
+      - key: NODE_VERSION
+        value: "20"
