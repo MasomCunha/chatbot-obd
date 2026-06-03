@@ -1,12 +1,12 @@
 import type { SearchResult } from "./vector-store";
 
 // Score mínimo de similaridade (coseno) para passar a pergunta ao LLM.
-// NOTA: com all-MiniLM-L6-v2, perguntas curtas na mesma língua têm um "ruído"
-// de base de ~0.3-0.4 mesmo quando não relacionadas; matches reais ficam ~0.5+.
-// Por isso usamos ~0.45 como atalho barato para rejeitar perguntas claramente
-// fora do tema. A garantia principal do "não sei" é o SYSTEM_PROMPT (o LLM vê o
-// contexto recuperado e recusa se a resposta não estiver lá). Ajustar com docs reais.
-export const RELEVANCE_THRESHOLD = 0.45;
+// NOTA: com gemini-embedding-001 a distribuição é mais "alta" — perguntas fora do
+// tema ficam ~0.50-0.54 e dentro do tema ~0.63-0.78 (medido com `npm run verify`).
+// Por isso usamos ~0.60 como atalho barato para rejeitar perguntas claramente fora
+// do tema. A garantia principal do "não sei" é o SYSTEM_PROMPT (o LLM vê o contexto
+// recuperado e recusa se a resposta não estiver lá). Reafinar se mudar o modelo/docs.
+export const RELEVANCE_THRESHOLD = 0.6;
 
 // --- Resgate lexical do gate de relevância ---
 // O gate denso (RELEVANCE_THRESHOLD) sozinho rejeita perguntas curtas/coloquiais

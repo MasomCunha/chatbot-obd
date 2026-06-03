@@ -17,15 +17,16 @@ respostas são em **português de Portugal**.
 - **Next.js 15** (App Router) + **React 19** + **TypeScript**
 - **Tailwind** + **shadcn/ui** (componentes em `components/`)
 - **Google Gemini** (`gemini-2.5-flash`, free tier) via **Vercel AI SDK** — streaming
-- **Embeddings locais** com `@huggingface/transformers` (transformers.js):
-  `Xenova/paraphrase-multilingual-MiniLM-L12-v2`, 384 dims, CPU, sem custo de API
+- **Embeddings via API do Google** (`gemini-embedding-001`, 768 dims) através do
+  Vercel AI SDK, com a MESMA chave do chat. (Antes eram locais com transformers.js,
+  mas o modelo estourava os 512 MB do free tier do Render — ver `lib/embeddings.ts`.)
 - **Busca híbrida em memória**: cosine (densa) + lexical (palavras-chave/bigramas),
   fundidas por Reciprocal Rank Fusion
 - PDFs fixos numa pasta, indexados por um script para `data/index.json`
 
-> **Runtime tem de ser Node, não Edge** — transformers.js + ONNX precisam de CPU
-> (ver `export const runtime = "nodejs"` em `app/api/chat/route.ts` e
-> `next.config.ts`).
+> **Runtime tem de ser Node, não Edge** — `pdf-parse` e a leitura do índice
+> precisam de Node (ver `export const runtime = "nodejs"` em
+> `app/api/chat/route.ts` e `next.config.ts`).
 
 ## Comandos
 
@@ -34,8 +35,8 @@ npm install        # instalar dependências
 npm run dev        # arrancar dev server em http://localhost:3000
 npm run build      # build de produção
 npm start          # arrancar produção (depois do build)
-npm run index      # (RE)indexar os PDFs -> gera data/index.json
-npm run verify     # teste offline do gate de relevância (NÃO precisa de API key)
+npm run index      # (RE)indexar os PDFs -> gera data/index.json (usa a API de embeddings)
+npm run verify     # teste do gate de relevância (precisa da API key — usa embeddings)
 npm run lint       # ESLint (next lint)
 ```
 
@@ -45,8 +46,8 @@ npm run lint       # ESLint (next lint)
 2. Criar `.env.local` a partir de `.env.local.example` e preencher
    `GOOGLE_GENERATIVE_AI_API_KEY` (chave gratuita do Google AI Studio).
 3. Colocar PDFs em `pdfs/`.
-4. `npm run index` — **correr sempre que os PDFs mudarem** (a 1ª execução faz
-   download do modelo de embeddings ~25 MB para a cache local).
+4. `npm run index` — **correr sempre que os PDFs mudarem** (gera os embeddings via
+   API do Google; o free tier limita a ~100/min, por isso a indexação faz pausas).
 5. `npm run dev`.
 
 A chave Gemini **nunca** vai no código; em produção é env var da plataforma.
@@ -59,12 +60,12 @@ re-indexa). Deploy recomendado: **Render** ou **Railway** (Web Service Node).
 |---|---|
 | `app/page.tsx` | UI do chat (cliente) |
 | `app/api/chat/route.ts` | Endpoint do chat: retrieval → **gate de relevância** → streaming Gemini |
-| `lib/embeddings.ts` | `embed()` — geração de embeddings (singleton da pipeline). Usar a MESMA função na indexação e na query |
+| `lib/embeddings.ts` | `embed()` / `embedAll()` — embeddings via API do Google (normalizados L2). Usar a MESMA função na indexação e na query |
 | `lib/vector-store.ts` | `loadIndex()`, `cosineSimilarity()`, `search()` (busca híbrida + sinal de resgate lexical), document-frequency |
 | `lib/prompt.ts` | `SYSTEM_PROMPT`, `NO_ANSWER_MESSAGE`, thresholds do gate, `buildContextPrompt()` |
 | `lib/pdf.ts` | Extração de texto + `chunkText()` (chunking por secção, prefixa cada chunk com o cabeçalho ex.: `[Secção: CLASSE 2]`) |
 | `scripts/index-pdfs.ts` | Script de indexação (`npm run index`) |
-| `scripts/verify-rag.mts` | Teste offline do gate (`npm run verify`) |
+| `scripts/verify-rag.mts` | Teste do gate (`npm run verify`); `scripts/_env.ts` carrega `.env.local` |
 | `data/index.json` | Índice de chunks com embeddings (commitado) |
 | `pdfs/` | PDFs-fonte (base de conhecimento) |
 
@@ -72,7 +73,8 @@ re-indexa). Deploy recomendado: **Render** ou **Railway** (Web Service Node).
 
 1. **Indexação** (`scripts/index-pdfs.ts` → `lib/pdf.ts`): extrai texto dos PDFs,
    divide em chunks por secção (cada chunk prefixado com o seu cabeçalho), gera
-   embeddings locais e grava `data/index.json`.
+   os embeddings via API do Google (em lotes, por causa do limite de taxa) e grava
+   `data/index.json`.
 2. **Por pergunta** (`app/api/chat/route.ts`): gera o embedding da pergunta →
    `search()` faz busca híbrida (cosine + lexical, fundidas por RRF) e devolve os
    top-8 trechos + sinais de gate → aplica o **gate de relevância** → se passar,

@@ -26,3 +26,6 @@ _kb_dump.txt
 
 # misc
 .DS_Store
+
+# ficheiros transitorios do Claude Code
+.claude/scheduled_tasks.lock

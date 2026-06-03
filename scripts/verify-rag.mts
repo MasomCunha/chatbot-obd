@@ -1,6 +1,9 @@
-// Verificação do RAG sobre o índice REAL (data/index.json), sem API key.
+// Verificação do RAG sobre o índice REAL (data/index.json).
 // Testa o contrato fiável: perguntas dentro do tema passam o gate; perguntas
 // fora do tema ficam abaixo do threshold (resposta "fora do contexto").
+// NOTA: os embeddings passaram a usar a API do Google, por isso este script já
+// precisa da GOOGLE_GENERATIVE_AI_API_KEY (.env.local) e de rede.
+import "./_env.ts"; // carrega .env.local — tem de vir primeiro
 import { embed } from "../lib/embeddings.ts";
 import { search } from "../lib/vector-store.ts";
 import { RELEVANCE_THRESHOLD } from "../lib/prompt.ts";

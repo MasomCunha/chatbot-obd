@@ -4,11 +4,12 @@
  *
  * Correr com: npm run index
  */
+import "./_env"; // carrega .env.local (chave da API de embeddings) — tem de vir primeiro
 import fs from "node:fs";
 import path from "node:path";
 
 import { extractText, chunkText, buildExerciseSummaries } from "../lib/pdf";
-import { embed } from "../lib/embeddings";
+import { embedAll } from "../lib/embeddings";
 import { INDEX_PATH, type IndexedChunk } from "../lib/vector-store";
 
 const PDF_DIR = path.join(process.cwd(), "pdfs");
@@ -30,7 +31,9 @@ async function main() {
 
   console.log(`Encontrados ${files.length} PDF(s): ${files.join(", ")}`);
 
-  const indexed: IndexedChunk[] = [];
+  // Recolhe todos os chunks de todos os PDFs primeiro, depois gera os embeddings
+  // num único batch (embedAll) — menos chamadas à API.
+  const pending: { text: string; source: string }[] = [];
 
   for (const file of files) {
     const buffer = fs.readFileSync(path.join(PDF_DIR, file));
@@ -43,12 +46,16 @@ async function main() {
     console.log(
       `  ${file}: ${chunks.length} chunk(s) (${summaries.length} resumo(s) de exercícios)`
     );
-
-    for (const chunk of chunks) {
-      const embedding = await embed(chunk.text);
-      indexed.push({ text: chunk.text, source: file, embedding });
-    }
+    for (const chunk of chunks) pending.push({ text: chunk.text, source: file });
   }
+
+  console.log(`A gerar embeddings de ${pending.length} chunks via API...`);
+  const embeddings = await embedAll(pending.map((p) => p.text));
+  const indexed: IndexedChunk[] = pending.map((p, i) => ({
+    text: p.text,
+    source: p.source,
+    embedding: embeddings[i],
+  }));
 
   const dataDir = path.dirname(INDEX_PATH);
   if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });

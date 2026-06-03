@@ -1,33 +1,25 @@
-import { pipeline } from "@huggingface/transformers";
+import { google } from "@ai-sdk/google";
+import { embed as aiEmbed, embedMany } from "ai";
 
-// Modelo de embeddings local/open-source MULTILINGUE (inclui português).
-// Importante para um corpus em PT: o all-MiniLM-L6-v2 (só inglês) comprime os
-// embeddings PT numa banda estreita e não separa bem dentro/fora do domínio.
-// Este modelo dá 384 dimensões e corre em CPU sem custo de API.
-const MODEL_ID = "Xenova/paraphrase-multilingual-MiniLM-L12-v2";
+// Embeddings via API do Google (modelo gratuito text-embedding-004, 768 dims).
+// Antes usávamos um modelo local (transformers.js/ONNX), mas carregá-lo em RAM
+// estourava os 512 MB do free tier do Render (OOM). Movendo os embeddings para a
+// API, o servidor deixa de carregar qualquer modelo — footprint mínimo.
+// Usa a MESMA chave GOOGLE_GENERATIVE_AI_API_KEY do chat (lida pelo AI SDK).
+// gemini-embedding-001 permite escolher a dimensão; 768 chega e mantém o índice
+// compacto. Nesta dimensão os vetores não vêm normalizados — a l2normalize trata.
+const MODEL_ID = "gemini-embedding-001";
+const model = google.textEmbeddingModel(MODEL_ID, { outputDimensionality: 768 });
 
-// Tipo mínimo da pipeline de feature-extraction. Usamos um tipo próprio (em vez
-// do tipo exportado pela lib) porque este é uma união enorme que faz o TS rebentar.
-type Extractor = (
-  text: string,
-  options: { pooling: "mean"; normalize: boolean }
-) => Promise<{ data: Float32Array }>;
-
-// Carregamos a pipeline uma única vez (singleton) e reutilizamos. A primeira
-// chamada faz download do modelo para a cache local; as seguintes são rápidas.
-let extractorPromise: Promise<Extractor> | null = null;
-
-// Quantização int8 (q8): o modelo ocupa ~1/4 da RAM do fp32. ESSENCIAL para correr
-// no free tier do Render (512 MB) — em fp32 o processo é morto por OOM ao carregar.
-// IMPORTANTE: a indexação (npm run index) e a query usam esta MESMA pipeline, por isso
-// os embeddings ficam consistentes. Se mudares o dtype, RE-INDEXA (npm run index).
-function getExtractor(): Promise<Extractor> {
-  if (!extractorPromise) {
-    extractorPromise = pipeline("feature-extraction", MODEL_ID, {
-      dtype: "q8",
-    }) as unknown as Promise<Extractor>;
-  }
-  return extractorPromise;
+// cosineSimilarity (vector-store) assume vetores normalizados (só produto
+// interno). Os embeddings do Google não vêm garantidamente unitários, por isso
+// normalizamos aqui (L2). Indexação e query passam pela mesma função => vetores
+// comparáveis.
+function l2normalize(v: number[]): number[] {
+  let norm = 0;
+  for (const x of v) norm += x * x;
+  norm = Math.sqrt(norm);
+  return norm === 0 ? v : v.map((x) => x / norm);
 }
 
 /**
@@ -35,16 +27,44 @@ function getExtractor(): Promise<Extractor> {
  * indexação como na query, para que os vetores sejam comparáveis.
  */
 export async function embed(text: string): Promise<number[]> {
-  const extractor = await getExtractor();
-  const output = await extractor(text, { pooling: "mean", normalize: true });
-  return Array.from(output.data as Float32Array);
+  const { embedding } = await aiEmbed({ model, value: text });
+  return l2normalize(embedding);
 }
 
-/** Gera embeddings para vários textos, um a um (suficiente para indexação local). */
+/**
+ * Gera embeddings para vários textos — usado na indexação. Limites do free tier
+ * do Google: máx. 100 por batch e ~100 embeddings/minuto. Por isso processamos em
+ * lotes de 90 e fazemos uma pausa de ~1 min entre lotes (indexação é pontual).
+ */
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 export async function embedAll(texts: string[]): Promise<number[][]> {
+  // Free tier do Google: ~100 pedidos/minuto. Usamos lotes pequenos (50) com pausa
+  // de ~1 min entre eles (fica bem abaixo do limite) e desligamos as retentativas
+  // automáticas do SDK (maxRetries: 0) — senão um 429 dispara repetições do lote
+  // inteiro e a "tempestade" nunca recupera. Fazemos a nossa própria retentativa.
+  const BATCH = 50;
+  const multi = texts.length > BATCH;
   const out: number[][] = [];
-  for (const t of texts) {
-    out.push(await embed(t));
+
+  for (let i = 0; i < texts.length; i += BATCH) {
+    if (multi) await sleep(62_000); // pausa/arrefecimento antes de cada lote
+    const slice = texts.slice(i, i + BATCH);
+
+    let embeddings: number[][] | null = null;
+    for (let attempt = 1; attempt <= 4 && !embeddings; attempt++) {
+      try {
+        const res = await embedMany({ model, values: slice, maxRetries: 0 });
+        embeddings = res.embeddings;
+      } catch (err) {
+        if (attempt === 4) throw err;
+        console.log(`  lote ${i / BATCH + 1}: limite atingido, a aguardar 62s (tentativa ${attempt})...`);
+        await sleep(62_000);
+      }
+    }
+
+    out.push(...embeddings!.map(l2normalize));
+    if (multi) console.log(`  embeddings: ${out.length}/${texts.length}`);
   }
   return out;
 }
