@@ -6,14 +6,20 @@
 import "./_env.ts"; // carrega .env.local — tem de vir primeiro
 import { embed } from "../lib/embeddings.ts";
 import { search } from "../lib/vector-store.ts";
-import { RELEVANCE_THRESHOLD } from "../lib/prompt.ts";
+import { RELEVANCE_THRESHOLD, buildRetrievalQuery } from "../lib/prompt.ts";
 
 let falhas = 0;
 
-async function run(label: "DENTRO" | "FORA", question: string) {
+// `retrievalText` é o que vai ao embedding/busca (pode incluir histórico para
+// simular seguimentos); `question` é só o rótulo mostrado.
+async function run(
+  label: "DENTRO" | "FORA",
+  question: string,
+  retrievalText: string = question
+) {
   const { results, maxScore, maxLex, lexicalRescue } = search(
-    await embed(question),
-    question,
+    await embed(retrievalText),
+    retrievalText,
     8
   );
   // Gate HÍBRIDO: relevância densa OU resgate lexical específico.
@@ -38,6 +44,21 @@ await run("DENTRO", "O que acontece se o cao ladrar durante o exercicio?");
 await run("DENTRO", "Quanto necessito para ter excelente?");
 await run("DENTRO", "O que acontece quando tenho amarelo?");
 await run("DENTRO", "O que acontece quando tenho vermelho?");
+// Pergunta de SEGUIMENTO (pronome) — sozinha cairia em "fora do contexto", mas
+// com o histórico da troca anterior o retrieval herda o referente (cartões).
+await run(
+  "DENTRO",
+  "que significam? (seguimento de 'que cartoes conheces?')",
+  buildRetrievalQuery([
+    { role: "user", content: "que cartoes conheces?" },
+    {
+      role: "assistant",
+      content:
+        "Os cartões conhecidos são o cartão amarelo e o cartão vermelho.",
+    },
+    { role: "user", content: "que significam?" },
+  ])
+);
 await run("FORA", "Qual e a melhor receita de bacalhau a bras?");
 await run("FORA", "Quem ganhou o campeonato do mundo de futebol em 2022?");
 

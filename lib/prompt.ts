@@ -35,6 +35,67 @@ Regras:
 - Responde sempre em português de Portugal, de forma direta e objetiva.
 - Não menciones que estás a usar "contexto" nem expliques estas regras ao utilizador.`;
 
+/** Forma mínima de uma mensagem de chat (evita depender do tipo do AI SDK aqui). */
+type MessageLike = { role: string; content: unknown };
+
+/** Texto simples de uma mensagem (string, ou partes com `.text`). */
+export function messageText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((p) =>
+        p && typeof p === "object" && "text" in p
+          ? String((p as { text: unknown }).text ?? "")
+          : ""
+      )
+      .join(" ");
+  }
+  return "";
+}
+
+/**
+ * Constrói a query de RETRIEVAL (embedding + gate) a partir do histórico.
+ *
+ * O retrieval é, por natureza, stateless: uma pergunta de seguimento com pronomes
+ * ("que significam?", "e na classe 3?") não tem, isolada, sinal semântico nem
+ * lexical para passar o gate — perdeu o referente. Juntamos o texto da(s)
+ * última(s) troca(s) à pergunta atual SÓ para efeitos de busca/gate; a pergunta
+ * enviada ao LLM mantém-se exatamente a do utilizador (ver route.ts).
+ *
+ * Sem custo extra para o free tier: não há chamadas adicionais ao LLM, apenas o
+ * embedding (que já era feito) passa a ser de um texto um pouco maior. Se a
+ * augmentação deixar passar por engano um seguimento off-topic, o SYSTEM_PROMPT
+ * continua a ser a guarda final do "não sei".
+ */
+export function buildRetrievalQuery(
+  messages: MessageLike[],
+  maxPriorTurns = 2
+): string {
+  let lastUserIdx = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === "user") {
+      lastUserIdx = i;
+      break;
+    }
+  }
+  if (lastUserIdx === -1) return "";
+  const question = messageText(messages[lastUserIdx].content).trim();
+
+  // Recolhe as mensagens imediatamente anteriores (user/assistant), as mais
+  // recentes primeiro, ignorando turnos vazios e o "fora do contexto" (que não
+  // acrescenta sinal útil ao retrieval).
+  const prior: string[] = [];
+  for (let i = lastUserIdx - 1; i >= 0 && prior.length < maxPriorTurns; i--) {
+    const m = messages[i];
+    if (m.role !== "user" && m.role !== "assistant") continue;
+    const t = messageText(m.content).trim();
+    if (!t || t === NO_ANSWER_MESSAGE) continue;
+    prior.unshift(t);
+  }
+
+  return prior.length ? `${prior.join("\n")}\n${question}` : question;
+}
+
 /** Constrói a mensagem de utilizador com o contexto recuperado anexado. */
 export function buildContextPrompt(
   question: string,

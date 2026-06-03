@@ -8,6 +8,8 @@ import {
   NO_ANSWER_MESSAGE,
   RELEVANCE_THRESHOLD,
   buildContextPrompt,
+  buildRetrievalQuery,
+  messageText,
 } from "@/lib/prompt";
 
 // transformers.js e o ficheiro de índice precisam do runtime Node, não do Edge.
@@ -18,22 +20,24 @@ export async function POST(req: Request) {
   const { messages }: { messages: CoreMessage[] } = await req.json();
 
   const lastUser = [...messages].reverse().find((m) => m.role === "user");
-  const question =
-    typeof lastUser?.content === "string"
-      ? lastUser.content
-      : Array.isArray(lastUser?.content)
-        ? lastUser.content
-            .map((p) => ("text" in p ? p.text : ""))
-            .join(" ")
-        : "";
+  const question = messageText(lastUser?.content).trim();
 
-  if (!question.trim()) {
+  if (!question) {
     return new Response("Pergunta vazia.", { status: 400 });
   }
 
-  // 1. Retrieval híbrido: embedding da pergunta + busca semântica + lexical.
-  const queryEmbedding = await embed(question);
-  const { results, maxScore, lexicalRescue } = search(queryEmbedding, question, 8);
+  // 1. Retrieval híbrido: embedding + busca semântica + lexical.
+  // A query de busca junta o histórico recente à pergunta atual (ver
+  // buildRetrievalQuery) para que perguntas de SEGUIMENTO com pronomes ("que
+  // significam?") herdem o referente e não caiam, sozinhas, no "fora do
+  // contexto". A pergunta enviada ao LLM (passo 3) mantém-se a do utilizador.
+  const retrievalQuery = buildRetrievalQuery(messages);
+  const queryEmbedding = await embed(retrievalQuery);
+  const { results, maxScore, lexicalRescue } = search(
+    queryEmbedding,
+    retrievalQuery,
+    8
+  );
 
   // 2. Guarda-rede HÍBRIDA: passa o gate se houver relevância densa (cosine) OU
   // uma correspondência lexical específica (resgata perguntas curtas/coloquiais
