@@ -1,0 +1,28 @@
+# dependencies
+/node_modules
+
+# next.js
+/.next/
+/out/
+next-env.d.ts
+
+# production
+/build
+
+# env
+.env
+.env.local
+.env*.local
+
+# NOTA: data/index.json e pdfs/*.pdf são propositadamente COMITADOS, para que o
+# índice já vá pronto no deploy (PDFs fixos). Se passares a usar muitos/grandes
+# PDFs ou indexação no build, considera voltar a ignorá-los.
+
+# debug / logs
+npm-debug.log*
+*.tsbuildinfo
+_ask20.mjs
+_kb_dump.txt
+
+# misc
+.DS_Store
