@@ -17,12 +17,15 @@ type Extractor = (
 // chamada faz download do modelo para a cache local; as seguintes são rápidas.
 let extractorPromise: Promise<Extractor> | null = null;
 
+// Quantização int8 (q8): o modelo ocupa ~1/4 da RAM do fp32. ESSENCIAL para correr
+// no free tier do Render (512 MB) — em fp32 o processo é morto por OOM ao carregar.
+// IMPORTANTE: a indexação (npm run index) e a query usam esta MESMA pipeline, por isso
+// os embeddings ficam consistentes. Se mudares o dtype, RE-INDEXA (npm run index).
 function getExtractor(): Promise<Extractor> {
   if (!extractorPromise) {
-    extractorPromise = pipeline(
-      "feature-extraction",
-      MODEL_ID
-    ) as unknown as Promise<Extractor>;
+    extractorPromise = pipeline("feature-extraction", MODEL_ID, {
+      dtype: "q8",
+    }) as unknown as Promise<Extractor>;
   }
   return extractorPromise;
 }
